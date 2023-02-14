@@ -1,0 +1,66 @@
+$FolderToStoreAttachments = "C:\temp\EMLFiles"
+$UpnOfUserToSearch = "jakegwynn@jakegwynndemo.com"
+
+Connect-MgGraph -Scopes "Mail.Read","Mail.ReadWrite"
+
+$User = Get-MgUser -Filter "userPrincipalName eq '$UpnOfUserToSearch'"
+$Messages = Get-MgUserMessage -UserId $User.Id -Filter "hasAttachments eq true" -All
+$AttachmentList = [System.Collections.Generic.List[PSObject]]@()
+foreach ($Message in ($Messages)) {
+    $Attachments = $null
+    $Attachments = Get-MgUserMessageAttachment -UserId $User.Id -MessageId $Message.Id -ExpandProperty "microsoft.graph.itemattachment/item" | Where-Object {$_.ContentType -like "message*"}
+    if($Attachments) {
+        #Write-Host "Message Subject: $($Message.Subject)"
+        #Write-Host "Attachment Name: $($Attachments.Name)"
+        foreach ($Attachment in $Attachments) {
+            $AttachmentList.Add($Attachment)
+        }
+    }
+}
+
+Write-Host "Total EML Attachments Found: $($AttachmentList.Count)"
+
+$AttachmentsWithAttachments = ($AttachmentList | Where {$_.additionalproperties.item.hasAttachments -eq $true})
+
+foreach ($OriginalAttachmentSet in $AttachmentsWithAttachments) {
+    $AttachmentItems = $null
+    $AttachmentItems = $OriginalAttachmentSet.AdditionalProperties.item
+
+    foreach ($Attachment in $AttachmentItems.attachments) {
+        if ($Attachment.contentType -like "message*") {
+            $mailMessage = New-Object System.Net.Mail.MailMessage
+
+            $mailMessage.From = New-Object System.Net.Mail.MailAddress($AttachmentItems.from.emailAddress.address)
+            $mailMessage.To.Add($AttachmentItems.toRecipients.emailAddress.address)
+            $mailMessage.Subject = $AttachmentItems.subject
+            $mailMessage.Body = $AttachmentItems.body.content
+
+            if ($AttachmentItems.body.contentType -eq "html") {
+                $mailMessage.IsBodyHtml = $true
+            }
+            foreach ($SubAttachment in $Attachment.item.attachments) {
+                if ($SubAttachment.contentType -like "application/pdf") {
+                    $FileName = "$($FolderToStoreAttachments)\$($SubAttachment.name)"
+                    $Bytes = $null
+                    $Bytes = [Convert]::FromBase64String($SubAttachment.contentBytes)
+                    [IO.File]::WriteAllBytes($FileName, $Bytes)
+                    $PdfAttachment = new-object Net.Mail.Attachment($FileName) 
+
+                    $mailMessage.Attachments.Add($PdfAttachment)
+                    #Write-Host "PDF Attachment Added to EML"
+                }
+            }
+            if ($mailMessage.Attachments) {
+                $smtpClient = New-Object System.Net.Mail.SmtpClient
+                $smtpClient.DeliveryMethod = [System.Net.Mail.SmtpDeliveryMethod]::SpecifiedPickupDirectory;
+                $smtpClient.PickupDirectoryLocation = $FolderToStoreAttachments
+                $smtpClient.Send($mailMessage)
+                #Write-Host "EML File Saved"
+                $smtpClient.Dispose()
+            }
+            $mailMessage.Dispose()
+        }
+    }
+}
+
+Disconnect-MgGraph
