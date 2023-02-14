@@ -62,8 +62,9 @@ foreach ($OriginalAttachmentSet in $AttachmentsWithAttachments) {
             $mailMessage.IsBodyHtml = $true
         }
         if ($Attachment.contentType -like "application/pdf") {
-            $FileName = "$($FolderToStoreAttachments)\$($Attachment.name)"
+            $FileName = $null
             $Bytes = $null
+            $FileName = "$($FolderToStoreAttachments)\$($Attachment.name)_$(($AttachmentItem.internetMessageId).TrimStart("<").TrimEnd(">"))_.pdf"
             $Bytes = [Convert]::FromBase64String($Attachment.contentBytes)
             [IO.File]::WriteAllBytes($FileName, $Bytes)
             $PdfAttachment = new-object Net.Mail.Attachment($FileName) 
