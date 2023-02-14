@@ -1,7 +1,32 @@
 $FolderToStoreAttachments = "C:\temp\EMLFiles"
 $UpnOfUserToSearch = "jakegwynn@jakegwynndemo.com"
 
-Connect-MgGraph -Scopes "Mail.Read"
+$ClientSecret = ""
+$TenantId = ""
+$AppId = ""
+
+function Connect-GraphApiWithClientSecret {
+    Write-Host "Authenticating to Graph API"
+    $Body = @{    
+        Grant_Type    = "client_credentials"
+        Scope         = "https://graph.microsoft.com/.default"
+        client_Id     = $AppId
+        Client_Secret = $ClientSecret
+        } 
+    $ConnectGraph = Invoke-RestMethod -Uri "https://login.microsoftonline.com/$TenantId/oauth2/v2.0/token" -Method POST -Body $Body
+    return $ConnectGraph.access_token
+}
+$Token = Connect-GraphApiWithClientSecret
+
+if (Get-Module -ListAvailable -Name Microsoft.Graph) {
+    Write-Host "Microsoft.Graph Module exists"
+} 
+else {
+    Write-Host "Microsoft.Graph Module does not exist"
+    Install-Module Microsoft.Graph -Scope AllUsers
+}
+
+Connect-MgGraph -AccessToken $Token
 
 $User = Get-MgUser -Filter "userPrincipalName eq '$UpnOfUserToSearch'"
 $Messages = Get-MgUserMessage -UserId $User.Id -Filter "hasAttachments eq true" -All
@@ -27,39 +52,34 @@ foreach ($OriginalAttachmentSet in $AttachmentsWithAttachments) {
     $AttachmentItems = $OriginalAttachmentSet.AdditionalProperties.item
 
     foreach ($Attachment in $AttachmentItems.attachments) {
-        if ($Attachment.contentType -like "message*") {
-            $mailMessage = New-Object System.Net.Mail.MailMessage
+        $mailMessage = New-Object System.Net.Mail.MailMessage
 
-            $mailMessage.From = New-Object System.Net.Mail.MailAddress($AttachmentItems.from.emailAddress.address)
-            $mailMessage.To.Add($AttachmentItems.toRecipients.emailAddress.address)
-            $mailMessage.Subject = $AttachmentItems.subject
-            $mailMessage.Body = $AttachmentItems.body.content
-
-            if ($AttachmentItems.body.contentType -eq "html") {
-                $mailMessage.IsBodyHtml = $true
-            }
-            foreach ($SubAttachment in $Attachment.item.attachments) {
-                if ($SubAttachment.contentType -like "application/pdf") {
-                    $FileName = "$($FolderToStoreAttachments)\$($SubAttachment.name)"
-                    $Bytes = $null
-                    $Bytes = [Convert]::FromBase64String($SubAttachment.contentBytes)
-                    [IO.File]::WriteAllBytes($FileName, $Bytes)
-                    $PdfAttachment = new-object Net.Mail.Attachment($FileName) 
-
-                    $mailMessage.Attachments.Add($PdfAttachment)
-                    #Write-Host "PDF Attachment Added to EML"
-                }
-            }
-            if ($mailMessage.Attachments) {
-                $smtpClient = New-Object System.Net.Mail.SmtpClient
-                $smtpClient.DeliveryMethod = [System.Net.Mail.SmtpDeliveryMethod]::SpecifiedPickupDirectory;
-                $smtpClient.PickupDirectoryLocation = $FolderToStoreAttachments
-                $smtpClient.Send($mailMessage)
-                #Write-Host "EML File Saved"
-                $smtpClient.Dispose()
-            }
-            $mailMessage.Dispose()
+        $mailMessage.From = New-Object System.Net.Mail.MailAddress($AttachmentItems.from.emailAddress.address)
+        $mailMessage.To.Add($AttachmentItems.toRecipients.emailAddress.address)
+        $mailMessage.Subject = $AttachmentItems.subject
+        $mailMessage.Body = $AttachmentItems.body.content
+        if ($AttachmentItems.body.contentType -eq "html") {
+            $mailMessage.IsBodyHtml = $true
         }
+        if ($Attachment.contentType -like "application/pdf") {
+            $FileName = "$($FolderToStoreAttachments)\$($Attachment.name)"
+            $Bytes = $null
+            $Bytes = [Convert]::FromBase64String($Attachment.contentBytes)
+            [IO.File]::WriteAllBytes($FileName, $Bytes)
+            $PdfAttachment = new-object Net.Mail.Attachment($FileName) 
+
+            $mailMessage.Attachments.Add($PdfAttachment)
+            #Write-Host "PDF Attachment Added to EML"
+        }
+        if ($mailMessage.Attachments) {
+            $smtpClient = New-Object System.Net.Mail.SmtpClient
+            $smtpClient.DeliveryMethod = [System.Net.Mail.SmtpDeliveryMethod]::SpecifiedPickupDirectory;
+            $smtpClient.PickupDirectoryLocation = $FolderToStoreAttachments
+            $smtpClient.Send($mailMessage)
+            #Write-Host "EML File Saved"
+            $smtpClient.Dispose()
+        }
+        $mailMessage.Dispose()
     }
 }
 
